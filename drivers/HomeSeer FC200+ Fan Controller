@@ -16,6 +16,7 @@
  *	Date: 2018-18-Oct
  *
  *	Changelog:
+ *        4.2 7/2/2019 Added 'Fan Control' capability 
 	  4.1 3/30/2019 fixed compatibility of slider
  *    4.0 3/29/2019 rules didn't allow double digit buttons so changed numbers accordingly.
  *    3.0 3/29/2019 fixed blink of leds and moves multi push/hold to buttons for better integration in rules.
@@ -48,6 +49,7 @@ metadata {
         capability "Refresh"
         capability "PushableButton"
         capability "Configuration"
+	capability "FanControl"
 
 		attribute	"ledMode", "string"
 		attribute   "numberOfButtons", "number"
@@ -62,6 +64,7 @@ metadata {
         command "setStatusLed", ["integer","integer","integer"]
         command "setBlinkDurationMilliseconds" ,["integer"]
 		command "push",["integer"]
+		command "cycleSpeed"
 
 
         fingerprint mfr: "000C", prod: "0203", model: "0001"
@@ -134,6 +137,7 @@ private dimmerEvents(hubitat.zwave.Command cmd) {
         if (cmd.value >= lowThresholdvalue+1 && cmd.value <= medThresholdvalue) { sendEvent(name: "currentState", value: "MED" as String) }
 	    if (cmd.value >= medThresholdvalue+1) { sendEvent(name: "currentState", value: "HIGH" as String) }
         result << createEvent(name: "level", value: cmd.value, unit: "%")
+	result << createEvent(name: "speed", value: parseLevelAsSpeed(cmd.value))
     }
     return result
 }
@@ -211,6 +215,84 @@ def off() {
     ], 5000)
 }
 
+def setSpeed(speed){
+    def validSpeeds = ["low","medium-low","medium","medium-high","high","on","off","auto"]
+    log.trace "Executing 'setSpeed' to ${speed}"
+    if(validSpeeds.contains(speed)){
+        switch(speed){
+            case "low": //TODO: dynamically remap the Hubitat required setpoints to better fit this device
+                setLevel(19)
+                break
+            case "medium-low": 
+                setLevel(39)
+                break
+            case "medium":
+                setLevel(59)
+                break
+            case "medium-high":
+                setLevel(79)
+                break
+            case "high":
+                setLevel(99)
+                break
+            case "on":
+                on()
+                break
+            case "off":
+                off()
+                break
+            case "auto":
+                log.warn "'Auto' speed is not available on this Homeseer device/driver."
+            default:
+                log.warn "Speed ${fanspeed} not implemented!"
+                break
+	}
+    }
+    else{
+        log.warn "Invalid fan speed requested: ${speed}"
+    }
+}
+
+def parseLevelAsSpeed(int level) {  
+  logDebug "Parsing level as speed: $level"
+  def result
+  switch (level) {
+    case 0:
+      result = "off"
+      break
+    case 1..19:
+      result = "low"
+      break
+    case 20..39:
+      result = "medium-low"
+      break
+    case 40..59:
+      result = "medium"
+      break
+    case 60..79:
+      result = "medium-high"
+      break
+    case 80..100:
+      result = "high"
+      break
+    default:
+      log.warn "Unexpected level $level during parseLevelAsSpeed"
+  }  
+  return result
+}
+
+
+def cycleSpeed(){
+    def cycleSpeeds = ["off","low","medium-low","medium","high"] //TODO: automatically remove medium-low if we aren't in 4 speed mode
+    //find the current index
+    def currentIndex = cycleSpeeds.indexOf(device.currentValue("speed"))
+    //calculate the next index 
+    def nextIndex = (currentIndex + 1 > cycleSpeeds.size() - 1) ? 0 : currentIndex + 1
+    //set the speed
+    log.trace "Executed 'cycleSpeed'. Next speed: ${cycleSpeeds[nextIndex]}"
+    setSpeed(cycleSpeeds[nextIndex])
+}
+
 def setLevel(value) {
     log.debug "setLevel >> value: $value"
     
@@ -236,6 +318,7 @@ def setLevel(value) {
 	if (level >= medThresholdvalue+1) { sendEvent(name: "currentState", value: "ADJUSTING.HIGH" as String, displayed: false) }
     
     sendEvent(name: "level", value: level, unit: "%")
+    sendEvent(name: "speed", value: parseLevelAsSpeed(level))
     def result = []
 
     result += response(zwave.basicV1.basicSet(value: level))
